@@ -1,0 +1,47 @@
+#
+# Common bcachefs specific functions
+#
+
+. common/module
+
+_run_bcachefs_util_prog()
+{
+	run_check $BCACHEFS_UTIL_PROG $*
+}
+
+_check_bcachefs_filesystem()
+{
+
+	device=$1
+
+	# If type is set, we're mounted
+	type=`_fs_type $device`
+	ok=1
+
+	if [ "$type" = "$FSTYP" ]; then
+		# mounted ...
+		mountpoint=`_umount_or_remount_ro $device`
+	fi
+
+	$BCACHEFS_UTIL_PROG fsck $device >$tmp.fsck 2>&1
+
+	if [ $? -ne 0 ]; then
+		_log_err "_check_bcachefs_filesystem: filesystem on $device is inconsistent"
+		echo "*** fsck.$FSTYP output ***"	>>$seqres.full
+		cat $tmp.fsck				>>$seqres.full
+		echo "*** end fsck.$FSTYP output"	>>$seqres.full
+
+		ok=0
+	fi
+	rm -f $tmp.fsck
+
+	if [ $ok -eq 0 ]; then
+		status=1
+		if [ "$iam" != "check" ]; then
+			exit 1
+		fi
+		return 1
+	fi
+
+	return 0
+}

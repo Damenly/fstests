@@ -890,6 +890,9 @@ _scratch_pool_mkfs()
     btrfs)
         $MKFS_BTRFS_PROG $MKFS_OPTIONS $* $SCRATCH_DEV_POOL > /dev/null
         ;;
+	bcachefs)
+        $MKFS_BCACHEFS_PROG $MKFS_OPTIONS $* $SCRATCH_DEV_POOL > /dev/null
+        ;;
     *)
         echo "_scratch_pool_mkfs is not implemented for $FSTYP" 1>&2
         ;;
@@ -3342,6 +3345,9 @@ _check_test_fs()
     ubifs)
 	# there is no fsck program for ubifs yet
 	;;
+    bcachefs)
+	_check_bcachefs_filesystem $TEST_DEV
+	;;
     *)
 	_check_generic_filesystem $TEST_DEV
 	;;
@@ -3398,6 +3404,9 @@ _check_scratch_fs()
     ubifs)
 	# there is no fsck program for ubifs yet
 	;;
+#    bcachefs)
+#	_check_bcachefs_filesystem $device
+#	;;
     *)
 	_check_generic_filesystem $device
 	;;
@@ -3633,7 +3642,7 @@ _require_scratch_dev_pool()
 	# btrfs test case needs ndevs or more scratch_dev_pool; other FS not sure
 	# so fail it
 	case $FSTYP in
-	btrfs)
+	btrfs|bcachefs)
 		if [ "`echo $SCRATCH_DEV_POOL|wc -w`" -lt $ndevs ]; then
 			_notrun "btrfs and this test needs $ndevs or more disks in SCRATCH_DEV_POOL"
 		fi

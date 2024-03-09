@@ -314,6 +314,7 @@ export E2FSCK_PROG=$(type -P e2fsck)
 export TUNE2FS_PROG=$(type -P tune2fs)
 export FSCK_OVERLAY_PROG=$(type -P fsck.overlay)
 export MKFS_BCACHEFS_PROG=$(set_mkfs_prog_path_with_opts bcachefs)
+export BCACHEFS_UTIL_PROG=$(type -P bcachefs)
 
 # SELinux adds extra xattrs which can mess up our expected output.
 # So, mount with a context, and they won't be created.
@@ -547,6 +548,11 @@ _source_specific_fs()
 	ubifs)
 		[ "$UBIUPDATEVOL_PROG" = "" ] && _fatal "ubiupdatevol not found"
 		. ./common/ubifs
+		;;
+	bcachefs)
+		[ "$MKFS_BCACHEFS_PROG" = "" ] && _fatal "mkfs.bcachefs not found"
+
+		. ./common/bcachefs
 		;;
 	esac
 }
