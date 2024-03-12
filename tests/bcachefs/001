@@ -1,0 +1,73 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2018 Oracle.  All Rights Reserved.
+#
+# FS QA Test 164 seed device delete test
+#
+# Test case to verify that a seed device can be deleted
+#  Create a seed device
+#  Create a sprout device
+#  Remount RW
+#  Run device delete on the seed device
+. ./common/preamble
+_begin_fstest auto quick volume remount
+
+# Override the default cleanup function.
+_cleanup()
+{
+	kill $pid 2&>1 >/dev/null
+	$KILLALL_PROG -q $FSSTRESS_PROG 2>&1 >/dev/null
+	wait
+	cd /
+	rm -f $tmp.*
+}
+
+# real QA test starts here
+
+# Modify as appropriate.
+_supported_fs bcachefs
+_require_scratch_dev_pool 4
+
+_require_command "$KILLALL_PROG" killall
+_scratch_dev_pool_get 4
+
+runtime=$((20 * TIME_FACTOR))
+
+ssd_1=$(echo $SCRATCH_DEV_POOL | $AWK_PROG '{print $1}')
+ssd_2=$(echo $SCRATCH_DEV_POOL | $AWK_PROG '{print $2}')
+hdd_1=$(echo $SCRATCH_DEV_POOL | $AWK_PROG '{print $3}')
+hdd_2=$(echo $SCRATCH_DEV_POOL | $AWK_PROG '{print $4}')
+
+mkfs.bcachefs \
+	--metadata_replicas=2 --data_replicas=2 --background_compression=lz4:15 \
+	--compression=lz4:15 \
+	--label=ssd.ssd1 $ssd_1 --label=ssd.ssd2 $ssd_2 \
+	--label=hdd.hdd1 $hdd_1 --label=hdd.hdd2 $hdd_2 \
+	--metadata_target=ssd --foreground_target=ssd \
+	--background_target=hdd --erasure_code >> $seqres.full 2>&1
+
+_mount -t $FSTYP $ssd_1:$ssd_2:$hdd_1:$hdd_2 $SCRATCH_MNT
+#_scratch_mount
+#
+$FSSTRESS_PROG $FSSTRESS_AVOID -p 32 -l 0 -d $SCRATCH_MNT/stressdir \
+	>> $seqres.full 2>&1 &
+
+while true; do
+	umount $SCRATCH_MNT 2&>1 >/dev/null
+done &
+pid=$!
+
+sleep 30
+#sleep $runtime
+
+kill $pid 2&>1 >/dev/null
+$KILLALL_PROG -q $FSSTRESS_PROG 2&>1 >/dev/null
+wait
+
+umount $SCRATCH_MNT 2&>1 >/dev/null
+#_scratch_unmount
+_scratch_dev_pool_put
+
+echo "Silence is golden"
+status=0
+exit
