@@ -30,7 +30,7 @@ _require_scratch
 _scratch_mkfs >> $seqres.full 2>&1
 
 TYPES="u g"
-MOUNT_OPTIONS="-o usrquota,grpquota"
+_qmount_option "usrquota,grpquota"
 _qmount
 _require_getnextquota
 

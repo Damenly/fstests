@@ -23,7 +23,8 @@ _require_scratch
 _require_quota
 
 _scratch_mkfs >>$seqres.full 2>&1
-_scratch_mount "-o usrquota,grpquota"
+_qmount_option "usrquota,grpquota"
+_qmount
 
 # xfs doesn't need these setups and quotacheck even fails on xfs, so just
 # redirect the output to $seqres.full for debug purpose and ignore the results,

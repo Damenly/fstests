@@ -305,6 +305,7 @@ _qmount_option()
 		-e 's/gqnoenforce/QUOTA/g' \
 		-e 's/pqnoenforce/QUOTA/g' \
 		-e 's/qnoenforce/QUOTA/g'  \
+		-e 's/quota=[^, ]*/QUOTA/g'  \
 		-e "s/QUOTA/$OPTS/g"`
 
 	# ext4 doesn't _do_ "-o pquota/prjquota" because reasons
@@ -313,6 +314,10 @@ _qmount_option()
 		OPTS=`echo $OPTS \
 		| sed	-e 's/\bpquota/quota/g'	\
 			-e 's/prjquota/quota/g'`
+	elif [[ "$FSTYP" == gfs2 ]]; then
+		OPTS=`echo $OPTS \
+		| sed	-e 's/usrquota/quota=account/g'	\
+			-e 's/grpquota/quota=account/g'`
 	# ocfs2 doesn't support "-o projquota"
 	elif [[ "$FSTYP" == ocfs2 ]]; then
 		OPTS=`echo $OPTS | sed -e 's/prjquota//g'`

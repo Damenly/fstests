@@ -25,7 +25,8 @@ do_repquota()
 
 
 _scratch_mkfs >> $seqres.full 2>&1
-_scratch_mount "-o usrquota,grpquota"
+_qmount_option "usrquota,grpquota"
+_qmount_option
 quotacheck -u -g $SCRATCH_MNT 2>/dev/null
 quotaon $SCRATCH_MNT 2>/dev/null
 

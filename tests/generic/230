@@ -99,7 +99,8 @@ grace=2
 _qmount_option 'defaults'
 
 _scratch_mkfs >> $seqres.full 2>&1
-_scratch_mount "-o usrquota,grpquota"
+_qmount_option "usrquota,grpquota"
+_qmount
 _force_vfs_quota_testing $SCRATCH_MNT
 BLOCK_SIZE=$(_get_file_block_size $SCRATCH_MNT)
 quotacheck -u -g $SCRATCH_MNT 2>/dev/null
@@ -113,7 +114,8 @@ setquota -g -t $grace $grace $SCRATCH_MNT
 _scratch_unmount
 
 echo; echo "### test user limit enforcement"
-_scratch_mount "-o usrquota"
+_qmount_option "usrquota"
+_qmount
 quotaon $SCRATCH_MNT 2>/dev/null
 type=u
 test_files

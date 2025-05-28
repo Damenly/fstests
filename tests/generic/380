@@ -44,8 +44,8 @@ echo "mkfs on scratch"
 _scratch_mkfs >$seqres.full 2>&1
 
 echo "mount with quotas"
-export MOUNT_OPTIONS="-o usrquota"
-_scratch_mount
+_qmount_option "usrquota"
+_qmount
 
 echo "creating quota file with holes"
 _chowning_file 1000 2000 100
