@@ -34,9 +34,8 @@ _require_freeze
 
 _scratch_unmount 2>/dev/null
 _scratch_mkfs >> $seqres.full 2>&1
-_scratch_mount "-o usrquota,grpquota"
-quotacheck -u -g $SCRATCH_MNT 2>/dev/null
-quotaon $SCRATCH_MNT 2>/dev/null
+_qmount_option "usrquota,grpquota"
+_qmount
 xfs_freeze -f $SCRATCH_MNT
 setquota -u root 1 2 3 4 $SCRATCH_MNT &
 pid=$!

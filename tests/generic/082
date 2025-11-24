@@ -23,13 +23,8 @@ _require_scratch
 _require_quota
 
 _scratch_mkfs >>$seqres.full 2>&1
-_scratch_mount "-o usrquota,grpquota"
-
-# xfs doesn't need these setups and quotacheck even fails on xfs, so just
-# redirect the output to $seqres.full for debug purpose and ignore the results,
-# as we check the quota status later anyway.
-quotacheck -ug $SCRATCH_MNT >>$seqres.full 2>&1
-quotaon $SCRATCH_MNT >>$seqres.full 2>&1
+_qmount_option 'usrquota,grpquota'
+_qmount "usrquota,grpquota"
 
 # first remount ro with a bad option, a failed remount ro should not disable
 # quota, but currently xfs doesn't fail in this case, the unknown option is
