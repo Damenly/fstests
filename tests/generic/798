@@ -1,0 +1,230 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2026 SUSE S.A.  All Rights Reserved.
+#
+# FS QA Test No. 798
+#
+# Create a persisted sparse file whose size is approximately 99% of the scratch
+# device, then write to random offsets in the file until its OCFS2 extent tree
+# reaches depth 2. Simulate a power failure while the random writer is still
+# running and verify the old data and hole contents after journal replay.
+#
+. ./common/preamble
+_begin_fstest auto quick log
+
+writer_pid=
+
+_stop_random_writer()
+{
+	[ -n "${writer_pid:-}" ] || return
+
+	# A stopped task cannot act on SIGTERM until it is continued.
+	kill -CONT "$writer_pid" > /dev/null 2>&1
+	kill "$writer_pid" > /dev/null 2>&1
+	wait "$writer_pid" > /dev/null 2>&1
+	writer_pid=
+}
+
+_cleanup()
+{
+	_stop_random_writer
+	_cleanup_flakey
+	cd /
+	rm -r -f "$tmp".*
+}
+
+. ./common/filter
+. ./common/dmflakey
+
+_require_scratch
+[ "$FSTYP" = "ocfs2" ] || _notrun "This test requires OCFS2"
+_require_dm_target flakey
+_require_xfs_io_command "pwrite"
+_require_xfs_io_command "fsync"
+
+DEBUGFS_OCFS2_PROG=$(type -P debugfs.ocfs2)
+_require_command "$DEBUGFS_OCFS2_PROG" debugfs.ocfs2
+
+_check_file_pattern()
+{
+	local file=$1
+	local offset=$2
+	local len=$3
+	local byte=$4
+	local what=$5
+	local got
+	local expected=""
+	local i
+
+	got=$(od -An -tx1 -v -j "$offset" -N "$len" "$file" | tr -d ' \n')
+
+	for ((i = 0; i < len; i++)); do
+		expected="${expected}${byte}"
+	done
+
+	[ "$got" = "$expected" ] || _fail "$what mismatch after power failure"
+}
+
+_check_sparse_file()
+{
+	local file=$1
+	local expected_size=$2
+	local last_data_offset=$((expected_size - 4096))
+	local size
+
+	[ -e "$file" ] || _fail "sparse file is missing"
+	size=$(stat -c %s "$file") || _fail "failed to stat sparse file"
+	[ "$size" -eq "$expected_size" ] || \
+		_fail "sparse file size mismatch after power failure"
+
+	_check_file_pattern "$file" 0 64 "5a" "first data extent"
+	_check_file_pattern "$file" $((512 * 1024)) 64 "00" "sparse hole"
+	_check_file_pattern "$file" "$last_data_offset" 64 "a5" \
+		"second data extent"
+}
+
+_get_extent_tree_depth()
+{
+	local depth
+
+	depth=$("$DEBUGFS_OCFS2_PROG" -R "stat /sparse-file" \
+		"$SCRATCH_DEV" 2>>"$seqres.full" | \
+		awk '$1 == "Tree" && $2 == "Depth:" { print $3; exit }')
+	[[ "$depth" =~ ^[0-9]+$ ]] || return 1
+
+	echo "$depth"
+}
+
+_checkpoint_and_get_extent_tree_depth()
+{
+	local depth
+
+	kill -STOP "$writer_pid" > /dev/null 2>&1 || return 1
+
+	# debugfs.ocfs2 reads the inode from the block device, so let OCFS2 commit
+	# and checkpoint the extent tree while fio is not redirtying that inode.
+	if ! $XFS_IO_PROG -c "fsync" "$sparse_file" \
+			>>"$seqres.full" 2>&1; then
+		kill -CONT "$writer_pid" > /dev/null 2>&1
+		return 1
+	fi
+	_scratch_sync
+	sleep 1
+	if ! depth=$(_get_extent_tree_depth); then
+		kill -CONT "$writer_pid" > /dev/null 2>&1
+		return 1
+	fi
+
+	kill -CONT "$writer_pid" > /dev/null 2>&1 || return 1
+	echo "$depth"
+}
+
+_power_fail_and_remount()
+{
+	# Switch to dropping writes while fio still has the file open. Stop fio only
+	# after this point so that unmount can complete.
+	type _prepare_for_eio_shutdown &>/dev/null && \
+		_prepare_for_eio_shutdown "$SCRATCH_DEV"
+	_load_flakey_table "$FLAKEY_DROP_WRITES"
+	_stop_random_writer
+	_scratch_unmount
+	_load_flakey_table "$FLAKEY_ALLOW_WRITES"
+	_scratch_mount
+}
+
+device_size=$(blockdev --getsize64 "$SCRATCH_DEV")
+sparse_file_size=$((device_size * 99 / 100))
+sparse_file_size=$((sparse_file_size / 4096 * 4096))
+random_write_offset=$((1024 * 1024))
+random_write_size=$((sparse_file_size - 2 * random_write_offset))
+[ "$random_write_size" -gt $((5 * 1024)) ] || \
+	_notrun "Scratch device is too small for the random write range"
+
+sparse_file=$SCRATCH_MNT/sparse-file
+fio_config=$tmp.fio
+
+cat >"$fio_config" <<EOF
+[random-writer]
+ioengine=sync
+direct=0
+fallocate=none
+filename=$sparse_file
+rw=randwrite
+bssplit=1k/20:2k/20:3k/20:4k/20:5k/20
+randrepeat=0
+overwrite=1
+allow_file_create=0
+offset=$random_write_offset
+size=$random_write_size
+numjobs=1
+thread=1
+time_based
+runtime=86400
+EOF
+
+_require_fio "$fio_config"
+
+_scratch_mkfs >>"$seqres.full" 2>&1 || _fail "mkfs failed"
+_require_metadata_journaling "$SCRATCH_DEV"
+_init_flakey
+_scratch_mount
+
+last_data_offset=$((sparse_file_size - 4096))
+
+# Create a sparse file with two data extents at its boundaries, then persist it
+# so that the later crash/recovery must not damage this old state.
+$XFS_IO_PROG -f \
+	-c "pwrite -S 0x5a 0 4K" \
+	-c "pwrite -S 0xa5 $last_data_offset 4K" \
+	-c "fsync" \
+	"$sparse_file" >>"$seqres.full" 2>&1 || \
+	_fail "failed to create sparse file"
+
+$XFS_IO_PROG -c "fsync" "$SCRATCH_MNT" >>"$seqres.full" 2>&1 || \
+	_fail "failed to fsync scratch root"
+_scratch_sync
+
+_check_sparse_file "$sparse_file" "$sparse_file_size"
+
+echo "Running fio with config:" >>"$seqres.full"
+cat "$fio_config" >>"$seqres.full"
+"$FIO_PROG" "$fio_config" >>"$seqres.full" 2>&1 &
+writer_pid=$!
+
+# Periodically checkpoint and poll the root extent list. debugfs.ocfs2 opens the
+# device read-only; awk exits after the first Tree Depth line so that the full
+# tree is not dumped each time.
+last_depth=
+while :; do
+	if ! kill -0 "$writer_pid" > /dev/null 2>&1; then
+		wait "$writer_pid"
+		writer_status=$?
+		writer_pid=
+		_fail "random writer exited with status $writer_status before depth 2"
+	fi
+
+	sleep 5
+	depth=$(_checkpoint_and_get_extent_tree_depth) || \
+		_fail "unable to read sparse file extent tree depth"
+	if [ "$depth" != "$last_depth" ]; then
+		echo "Extent tree depth: $depth" >>"$seqres.full"
+		last_depth=$depth
+	fi
+	[ "$depth" -ge 2 ] && break
+done
+
+# Keep random writes running for another random 2 to 10 seconds, then simulate
+# a power failure and remount the filesystem to replay the journal.
+power_fail_delay=$((RANDOM % 9 + 2))
+echo "Power failure delay: $power_fail_delay seconds" >>"$seqres.full"
+sleep "$power_fail_delay"
+kill -0 "$writer_pid" > /dev/null 2>&1 || \
+	_fail "random writer exited before power failure"
+_power_fail_and_remount
+
+_check_sparse_file "$sparse_file" "$sparse_file_size"
+
+echo "Silence is golden"
+
+# Success, all done.
+_exit 0
